@@ -87,17 +87,42 @@ export const saveOrder = createServerFn({ method: "POST" })
     const maxDiscount = await getMaxDiscount();
     const productMap = await loadProductsByIds(data.items.map((i) => i.product_id));
 
-    // Validar stock agregando líneas con mismo producto
+    // Validar stock agregando líneas con mismo producto.
+    // Stock disponible = stock base - reservas (otros pedidos confirmados sin facturar).
     const stockByProduct = new Map<string, number>();
     for (const it of data.items) {
       stockByProduct.set(it.product_id, (stockByProduct.get(it.product_id) ?? 0) + Number(it.quantity));
     }
+
+    // Cargar reservas activas excluyendo el pedido actual (si se está editando)
+    const productIds = Array.from(stockByProduct.keys());
+    const reservedMap = new Map<string, number>();
+    if (productIds.length > 0) {
+      let rq = supabaseAdmin
+        .from("order_items")
+        .select("product_id, quantity, order:orders!inner(id, status)")
+        .in("product_id", productIds);
+      const { data: resvRows } = await rq;
+      type Row = { product_id: string; quantity: number; order: { id: string; status: string } | { id: string; status: string }[] | null };
+      for (const r of ((resvRows ?? []) as unknown) as Row[]) {
+        const ord = Array.isArray(r.order) ? r.order[0] : r.order;
+        if (!ord) continue;
+        if (ord.status !== "confirmed") continue;
+        if (data.id && ord.id === data.id) continue; // excluir propio
+        reservedMap.set(r.product_id, (reservedMap.get(r.product_id) ?? 0) + Number(r.quantity));
+      }
+    }
+
     for (const [pid, qty] of stockByProduct) {
       const p = productMap.get(pid);
       if (!p) throw new Error("Producto no encontrado");
       if (!p.active) throw new Error(`Producto inactivo: ${p.name}`);
-      if (p.stock != null && qty > Number(p.stock)) {
-        throw new Error(`Stock insuficiente para ${p.name} (disponible: ${p.stock}, solicitado: ${qty})`);
+      if (p.stock != null) {
+        const reserved = reservedMap.get(pid) ?? 0;
+        const available = Math.max(0, Number(p.stock) - reserved);
+        if (qty > available) {
+          throw new Error(`Stock insuficiente para ${p.name} (disponible: ${available}, reservado en otros pedidos: ${reserved}, solicitado: ${qty})`);
+        }
       }
     }
 

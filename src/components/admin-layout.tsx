@@ -14,6 +14,7 @@ import {
   CreditCard,
   Inbox,
   ClipboardList,
+  UserPlus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NotificationBell } from "@/components/flow/NotificationBell";
@@ -22,6 +23,7 @@ const nav = [
   { to: "/admin", label: "Dashboard", icon: LayoutDashboard, exact: true },
   { to: "/admin/pedidos", label: "Pedidos", icon: ShoppingCart, exact: false },
   { to: "/admin/clientes", label: "Clientes", icon: Users, exact: false },
+  { to: "/admin/clientes-pendientes", label: "Aprobar clientes", icon: UserPlus, exact: false },
   { to: "/admin/productos", label: "Productos", icon: Package, exact: false },
   { to: "/admin/medios-pago", label: "Medios de pago", icon: CreditCard, exact: false },
   { to: "/admin/solicitudes", label: "Solicitudes", icon: ClipboardList, exact: false },

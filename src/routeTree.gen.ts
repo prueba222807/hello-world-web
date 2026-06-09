@@ -32,6 +32,7 @@ import { Route as AuthenticatedAdminReportesRouteImport } from './routes/_authen
 import { Route as AuthenticatedAdminProductosRouteImport } from './routes/_authenticated/admin/productos'
 import { Route as AuthenticatedAdminPedidosRouteImport } from './routes/_authenticated/admin/pedidos'
 import { Route as AuthenticatedAdminMediosPagoRouteImport } from './routes/_authenticated/admin/medios-pago'
+import { Route as AuthenticatedAdminClientesPendientesRouteImport } from './routes/_authenticated/admin/clientes-pendientes'
 import { Route as AuthenticatedAdminClientesRouteImport } from './routes/_authenticated/admin/clientes'
 import { Route as AuthenticatedAdminAjustesRouteImport } from './routes/_authenticated/admin/ajustes'
 
@@ -161,6 +162,12 @@ const AuthenticatedAdminMediosPagoRoute =
     path: '/medios-pago',
     getParentRoute: () => AuthenticatedAdminRoute,
   } as any)
+const AuthenticatedAdminClientesPendientesRoute =
+  AuthenticatedAdminClientesPendientesRouteImport.update({
+    id: '/clientes-pendientes',
+    path: '/clientes-pendientes',
+    getParentRoute: () => AuthenticatedAdminRoute,
+  } as any)
 const AuthenticatedAdminClientesRoute =
   AuthenticatedAdminClientesRouteImport.update({
     id: '/clientes',
@@ -184,6 +191,7 @@ export interface FileRoutesByFullPath {
   '/vendedor': typeof AuthenticatedVendedorRouteWithChildren
   '/admin/ajustes': typeof AuthenticatedAdminAjustesRoute
   '/admin/clientes': typeof AuthenticatedAdminClientesRoute
+  '/admin/clientes-pendientes': typeof AuthenticatedAdminClientesPendientesRoute
   '/admin/medios-pago': typeof AuthenticatedAdminMediosPagoRoute
   '/admin/pedidos': typeof AuthenticatedAdminPedidosRoute
   '/admin/productos': typeof AuthenticatedAdminProductosRoute
@@ -208,6 +216,7 @@ export interface FileRoutesByTo {
   '/cola': typeof AuthenticatedColaRoute
   '/admin/ajustes': typeof AuthenticatedAdminAjustesRoute
   '/admin/clientes': typeof AuthenticatedAdminClientesRoute
+  '/admin/clientes-pendientes': typeof AuthenticatedAdminClientesPendientesRoute
   '/admin/medios-pago': typeof AuthenticatedAdminMediosPagoRoute
   '/admin/pedidos': typeof AuthenticatedAdminPedidosRoute
   '/admin/productos': typeof AuthenticatedAdminProductosRoute
@@ -236,6 +245,7 @@ export interface FileRoutesById {
   '/_authenticated/vendedor': typeof AuthenticatedVendedorRouteWithChildren
   '/_authenticated/admin/ajustes': typeof AuthenticatedAdminAjustesRoute
   '/_authenticated/admin/clientes': typeof AuthenticatedAdminClientesRoute
+  '/_authenticated/admin/clientes-pendientes': typeof AuthenticatedAdminClientesPendientesRoute
   '/_authenticated/admin/medios-pago': typeof AuthenticatedAdminMediosPagoRoute
   '/_authenticated/admin/pedidos': typeof AuthenticatedAdminPedidosRoute
   '/_authenticated/admin/productos': typeof AuthenticatedAdminProductosRoute
@@ -264,6 +274,7 @@ export interface FileRouteTypes {
     | '/vendedor'
     | '/admin/ajustes'
     | '/admin/clientes'
+    | '/admin/clientes-pendientes'
     | '/admin/medios-pago'
     | '/admin/pedidos'
     | '/admin/productos'
@@ -288,6 +299,7 @@ export interface FileRouteTypes {
     | '/cola'
     | '/admin/ajustes'
     | '/admin/clientes'
+    | '/admin/clientes-pendientes'
     | '/admin/medios-pago'
     | '/admin/pedidos'
     | '/admin/productos'
@@ -315,6 +327,7 @@ export interface FileRouteTypes {
     | '/_authenticated/vendedor'
     | '/_authenticated/admin/ajustes'
     | '/_authenticated/admin/clientes'
+    | '/_authenticated/admin/clientes-pendientes'
     | '/_authenticated/admin/medios-pago'
     | '/_authenticated/admin/pedidos'
     | '/_authenticated/admin/productos'
@@ -502,6 +515,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAdminMediosPagoRouteImport
       parentRoute: typeof AuthenticatedAdminRoute
     }
+    '/_authenticated/admin/clientes-pendientes': {
+      id: '/_authenticated/admin/clientes-pendientes'
+      path: '/clientes-pendientes'
+      fullPath: '/admin/clientes-pendientes'
+      preLoaderRoute: typeof AuthenticatedAdminClientesPendientesRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
+    }
     '/_authenticated/admin/clientes': {
       id: '/_authenticated/admin/clientes'
       path: '/clientes'
@@ -522,6 +542,7 @@ declare module '@tanstack/react-router' {
 interface AuthenticatedAdminRouteChildren {
   AuthenticatedAdminAjustesRoute: typeof AuthenticatedAdminAjustesRoute
   AuthenticatedAdminClientesRoute: typeof AuthenticatedAdminClientesRoute
+  AuthenticatedAdminClientesPendientesRoute: typeof AuthenticatedAdminClientesPendientesRoute
   AuthenticatedAdminMediosPagoRoute: typeof AuthenticatedAdminMediosPagoRoute
   AuthenticatedAdminPedidosRoute: typeof AuthenticatedAdminPedidosRoute
   AuthenticatedAdminProductosRoute: typeof AuthenticatedAdminProductosRoute
@@ -535,6 +556,8 @@ interface AuthenticatedAdminRouteChildren {
 const AuthenticatedAdminRouteChildren: AuthenticatedAdminRouteChildren = {
   AuthenticatedAdminAjustesRoute: AuthenticatedAdminAjustesRoute,
   AuthenticatedAdminClientesRoute: AuthenticatedAdminClientesRoute,
+  AuthenticatedAdminClientesPendientesRoute:
+    AuthenticatedAdminClientesPendientesRoute,
   AuthenticatedAdminMediosPagoRoute: AuthenticatedAdminMediosPagoRoute,
   AuthenticatedAdminPedidosRoute: AuthenticatedAdminPedidosRoute,
   AuthenticatedAdminProductosRoute: AuthenticatedAdminProductosRoute,
@@ -600,13 +623,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}

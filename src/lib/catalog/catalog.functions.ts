@@ -64,6 +64,8 @@ export const listCustomers = createServerFn({ method: "GET" })
       q = q.eq("seller_siigo_id", data.seller_id);
     }
     if (typeof data.active === "boolean") q = q.eq("active", data.active);
+    // Ocultar rechazados del listado normal (la columna existe tras la migración).
+    q = (q as unknown as { neq: (c: string, v: string) => typeof q }).neq("approval_status", "rejected");
     const { data: rows, error } = await q;
     if (error) throw new Error(error.message);
     return { customers: rows ?? [] };
@@ -90,10 +92,26 @@ export const listProducts = createServerFn({ method: "GET" })
     const { data: rows, error } = await q;
     if (error) throw new Error(error.message);
     type Row = (typeof rows extends Array<infer T> ? T : never);
+    // Cargar reservas (pedidos confirmados sin facturar)
+    const ids = ((rows ?? []) as Row[]).map((r) => (r as { id: string }).id);
+    let reservedMap = new Map<string, number>();
+    if (ids.length > 0) {
+      const { data: resv } = await supabaseAdmin
+        // Vista creada en migración; aún no aparece en types generados.
+        .from("product_reservations" as unknown as "products")
+        .select("product_id, reserved_qty")
+        .in("product_id", ids);
+      for (const r of ((resv ?? []) as unknown) as Array<{ product_id: string; reserved_qty: number | string }>) {
+        reservedMap.set(r.product_id, Number(r.reserved_qty) || 0);
+      }
+    }
     const mapped = ((rows ?? []) as Row[]).map((r) => {
-      const override = (r as { stock_override: number | null }).stock_override;
-      const baseStock = (r as { stock: number | null }).stock;
-      return { ...r, stock: override != null ? Number(override) : baseStock };
+      const row = r as { id: string; stock_override: number | null; stock: number | null };
+      const override = row.stock_override;
+      const baseStock = override != null ? Number(override) : row.stock;
+      const reserved = reservedMap.get(row.id) ?? 0;
+      const available = baseStock != null ? Math.max(0, Number(baseStock) - reserved) : null;
+      return { ...r, stock: available, stock_reserved: reserved, stock_base: baseStock };
     });
     const filtered = data.inStockOnly ? mapped.filter((p) => (p.stock ?? 0) > 0) : mapped;
     return { products: filtered };
@@ -512,24 +530,28 @@ export const syncPaymentMethods = createServerFn({ method: "POST" })
   });
 
 // ---------- CLIENTES LOCALES (vendedor) ----------
+const LocalCustomerSchema = z.object({
+  identification: z.string().trim().min(3).max(40),
+  id_type: z.string().trim().max(10).default("13"),
+  person_type: z.enum(["Person", "Company"]).default("Person"),
+  display_name: z.string().trim().min(2).max(200),
+  commercial_name: z.string().trim().max(200).optional(),
+  first_name: z.string().trim().max(120).optional(),
+  last_name: z.string().trim().max(120).optional(),
+  email: z.string().trim().email().max(200).optional().or(z.literal("")),
+  phone: z.string().trim().max(40).optional(),
+  address: z.string().trim().max(300).optional(),
+  city_name: z.string().trim().max(120).optional(),
+  city_code: z.string().trim().max(20).optional(),
+  state_code: z.string().trim().max(20).optional(),
+  country_code: z.string().trim().max(5).default("Co"),
+});
+
 export const createLocalCustomer = createServerFn({ method: "POST" })
   .middleware([attachAuthHeader, requireSupabaseAuth])
-  .inputValidator((input: unknown) => z.object({
-    identification: z.string().trim().min(3).max(40),
-    id_type: z.string().trim().max(10).default("13"),
-    person_type: z.enum(["Person", "Company"]).default("Person"),
-    display_name: z.string().trim().min(2).max(200),
-    commercial_name: z.string().trim().max(200).optional(),
-    first_name: z.string().trim().max(120).optional(),
-    last_name: z.string().trim().max(120).optional(),
-    email: z.string().trim().email().max(200).optional().or(z.literal("")),
-    phone: z.string().trim().max(40).optional(),
-    address: z.string().trim().max(300).optional(),
-    city_name: z.string().trim().max(120).optional(),
-    city_code: z.string().trim().max(20).optional(),
-  }).parse(input))
+  .inputValidator((input: unknown) => LocalCustomerSchema.parse(input))
   .handler(async ({ data, context }) => {
-    // El vendedor debe tener asignado un vendedor de Siigo para poder crear clientes.
+    // El vendedor debe tener asignado un vendedor de Siigo para poder solicitar clientes.
     const { data: seller } = await supabaseAdmin
       .from("sellers").select("siigo_user_id").eq("user_id", context.userId).maybeSingle();
     if (!seller?.siigo_user_id) {
@@ -542,50 +564,169 @@ export const createLocalCustomer = createServerFn({ method: "POST" })
       throw new Error(`Ya existe un cliente con esa identificación: ${existing.display_name}`);
     }
 
-    // Construir nombre para Siigo
-    let nameArr: string[];
-    if (data.person_type === "Company") {
-      nameArr = [data.commercial_name || data.display_name];
-    } else {
-      const first = data.first_name?.trim() || data.display_name.trim().split(/\s+/)[0] || data.display_name;
-      const last = data.last_name?.trim() || data.display_name.trim().split(/\s+/).slice(1).join(" ") || first;
-      nameArr = [first, last];
-    }
-
-    const siigoPayload: Record<string, unknown> = {
-      type: "Customer",
-      person_type: data.person_type,
-      id_type: data.id_type,
+    // NUEVO FLUJO: NO se llama a Siigo aquí. Queda en estado 'pending'
+    // esperando aprobación del administrador. Solo entonces se crea en Siigo.
+    const row = {
+      siigo_id: null,
       identification: data.identification,
-      branch_office: 0,
-      name: nameArr,
+      id_type: data.id_type,
+      person_type: data.person_type,
+      display_name: data.display_name,
       commercial_name: data.commercial_name ?? null,
-      vat_responsible: false,
-      fiscal_responsibilities: [{ code: "R-99-PN" }],
+      first_name: data.first_name?.trim() || null,
+      last_name: data.last_name?.trim() || null,
+      email: data.email && data.email.length > 0 ? data.email : null,
+      phone: data.phone ?? null,
+      address: data.address ?? null,
+      city_name: data.city_name ?? null,
+      city_code: data.city_code ?? null,
+      state_name: null,
+      country_code: data.country_code || "Co",
+      seller_siigo_id: seller.siigo_user_id,
+      created_by_user: context.userId,
       active: true,
-      related_users: { seller_id: Number(seller.siigo_user_id) || seller.siigo_user_id },
+      approval_status: "pending",
+      requested_at: new Date().toISOString(),
     };
-    const contacts: Array<Record<string, unknown>> = [];
-    if (data.email || data.phone) {
-      contacts.push({
-        first_name: data.person_type === "Person" ? nameArr[0] : (data.commercial_name || data.display_name),
-        last_name: data.person_type === "Person" ? (nameArr[1] || nameArr[0]) : ".",
-        email: data.email || undefined,
-        phone: data.phone ? { number: data.phone } : undefined,
-      });
-    }
-    if (contacts.length > 0) siigoPayload.contacts = contacts;
-    if (data.address && data.city_code && data.city_name) {
-      siigoPayload.address = {
-        address: data.address,
-        city: { country_code: "Co", state_code: data.city_code.slice(0, 2), city_code: data.city_code, city_name: data.city_name },
-      };
-    }
+    const { data: inserted, error } = await supabaseAdmin
+      .from("customers").insert(row as never).select("id, display_name, identification, email, phone, address, city_name").single();
+    if (error) throw new Error(error.message);
+    return { customer: inserted, pending: true as const };
+  });
 
+// ---------- APROBACIÓN DE CLIENTES (admin) ----------
+function buildSiigoCustomerPayload(c: {
+  person_type: string;
+  id_type: string | null;
+  identification: string;
+  display_name: string;
+  commercial_name: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  city_code: string | null;
+  city_name: string | null;
+  country_code: string | null;
+  seller_siigo_id: string | null;
+}) {
+  const isCompany = c.person_type === "Company";
+  let nameArr: string[];
+  if (isCompany) {
+    nameArr = [c.commercial_name || c.display_name];
+  } else {
+    const fallback = c.display_name.trim().split(/\s+/);
+    const first = (c.first_name || fallback[0] || c.display_name).trim();
+    const last = (c.last_name || fallback.slice(1).join(" ") || first).trim();
+    nameArr = [first, last];
+  }
+  const payload: Record<string, unknown> = {
+    type: "Customer",
+    person_type: c.person_type,
+    id_type: c.id_type || "13",
+    identification: c.identification,
+    branch_office: 0,
+    name: nameArr,
+    commercial_name: c.commercial_name ?? null,
+    vat_responsible: false,
+    fiscal_responsibilities: [{ code: "R-99-PN" }],
+    active: true,
+  };
+  if (c.seller_siigo_id) {
+    payload.related_users = { seller_id: Number(c.seller_siigo_id) || c.seller_siigo_id };
+  }
+  const contactName = isCompany ? (c.commercial_name || c.display_name) : nameArr[0];
+  const contactLast = isCompany ? "." : (nameArr[1] || nameArr[0]);
+  if (c.email || c.phone) {
+    payload.contacts = [{
+      first_name: contactName,
+      last_name: contactLast,
+      email: c.email || undefined,
+      phone: c.phone ? { number: c.phone } : undefined,
+    }];
+  }
+  if (c.address) {
+    const city_code = c.city_code || "11001";
+    const city_name = c.city_name || "Bogotá, D.C.";
+    const country = c.country_code || "Co";
+    payload.address = {
+      address: c.address,
+      city: {
+        country_code: country,
+        state_code: city_code.slice(0, 2),
+        city_code,
+        city_name,
+      },
+    };
+  }
+  return payload;
+}
+
+export const listPendingCustomers = createServerFn({ method: "GET" })
+  .middleware([attachAuthHeader, requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await assertAdmin(context.userId);
+    const { data, error } = await supabaseAdmin
+      .from("customers")
+      .select("id, identification, id_type, person_type, display_name, commercial_name, first_name, last_name, email, phone, address, city_name, city_code, country_code, seller_siigo_id, created_by_user, created_at")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (error) throw new Error(error.message);
+    // Cargar approval_status por separado para evitar romper tipos generados.
+    const rows = data ?? [];
+    if (rows.length === 0) return { customers: [] as Array<typeof rows[number] & { approval_status: string }> };
+    const ids = rows.map((r) => r.id);
+    const { data: statuses } = await (supabaseAdmin as unknown as { from: (t: string) => { select: (s: string) => { in: (c: string, v: string[]) => Promise<{ data: Array<{ id: string; approval_status: string }> | null }> } } })
+      .from("customers").select("id, approval_status").in("id", ids);
+    const statusMap = new Map<string, string>();
+    for (const s of statuses ?? []) statusMap.set(s.id, s.approval_status);
+    const pending = rows
+      .filter((r) => statusMap.get(r.id) === "pending")
+      .map((r) => ({ ...r, approval_status: statusMap.get(r.id) ?? "pending" }));
+    return { customers: pending };
+  });
+
+export const approveCustomer = createServerFn({ method: "POST" })
+  .middleware([attachAuthHeader, requireSupabaseAuth])
+  .inputValidator((input: unknown) => z.object({
+    id: z.string().uuid(),
+    patch: LocalCustomerSchema.partial().optional(),
+  }).parse(input))
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context.userId);
+    const { data: current, error: e1 } = await supabaseAdmin
+      .from("customers")
+      .select("id, siigo_id, identification, id_type, person_type, display_name, commercial_name, first_name, last_name, email, phone, address, city_name, city_code, country_code, seller_siigo_id")
+      .eq("id", data.id)
+      .maybeSingle();
+    if (e1 || !current) throw new Error("Cliente no encontrado");
+    if (current.siigo_id) throw new Error("Este cliente ya está creado en Siigo");
+
+    // Aplicar parche del admin (opcional) antes de enviar a Siigo
+    const patch = data.patch ?? {};
+    const merged = {
+      identification: patch.identification ?? current.identification,
+      id_type: patch.id_type ?? current.id_type ?? "13",
+      person_type: (patch.person_type ?? current.person_type ?? "Person") as "Person" | "Company",
+      display_name: patch.display_name ?? current.display_name,
+      commercial_name: patch.commercial_name ?? current.commercial_name,
+      first_name: patch.first_name ?? current.first_name,
+      last_name: patch.last_name ?? current.last_name,
+      email: patch.email ?? current.email,
+      phone: patch.phone ?? current.phone,
+      address: patch.address ?? current.address,
+      city_name: patch.city_name ?? current.city_name,
+      city_code: patch.city_code ?? current.city_code,
+      country_code: patch.country_code ?? current.country_code ?? "Co",
+      seller_siigo_id: current.seller_siigo_id,
+    };
+
+    const payload = buildSiigoCustomerPayload(merged);
     let siigoCreated: { id?: string } | null = null;
     try {
       siigoCreated = await SiigoClient.request<{ id?: string }>({
-        method: "POST", path: "/v1/customers", body: siigoPayload,
+        method: "POST", path: "/v1/customers", body: payload,
       });
     } catch (e) {
       let detail = e instanceof Error ? e.message : String(e);
@@ -594,39 +735,49 @@ export const createLocalCustomer = createServerFn({ method: "POST" })
           const parsed = JSON.parse(e.body) as { Errors?: Array<{ Message?: string; Code?: string }>; message?: string };
           if (parsed.Errors?.length) {
             detail = parsed.Errors.map((x) => `${x.Code ?? ""} ${x.Message ?? ""}`.trim()).join(" | ");
-          } else if (parsed.message) {
-            detail = parsed.message;
-          } else {
-            detail = e.body;
-          }
-        } catch {
-          detail = e.body;
-        }
+          } else if (parsed.message) detail = parsed.message;
+          else detail = e.body;
+        } catch { detail = e.body; }
       }
-      console.error("Siigo create customer failed:", detail, "payload:", JSON.stringify(siigoPayload));
+      console.error("Siigo create customer failed:", detail, "payload:", JSON.stringify(payload));
       throw new Error(`Siigo rechazó el cliente: ${detail.slice(0, 600)}`);
     }
 
-    const row = {
+    const updateRow = {
+      ...merged,
       siigo_id: siigoCreated?.id ?? null,
-      identification: data.identification,
-      id_type: data.id_type,
-      person_type: data.person_type,
-      display_name: data.display_name,
-      commercial_name: data.commercial_name ?? null,
-      email: data.email && data.email.length > 0 ? data.email : null,
-      phone: data.phone ?? null,
-      address: data.address ?? null,
-      city_name: data.city_name ?? null,
-      city_code: data.city_code ?? null,
-      seller_siigo_id: seller.siigo_user_id,
-      created_by_user: context.userId,
-      active: true,
+      approval_status: "approved",
+      approved_at: new Date().toISOString(),
+      approved_by: context.userId,
+      rejection_reason: null,
+      email: merged.email && merged.email.length > 0 ? merged.email : null,
     };
-    const { data: inserted, error } = await supabaseAdmin
-      .from("customers").insert(row).select("id, display_name, identification, email, phone, address, city_name").single();
+    const { error: e2 } = await supabaseAdmin
+      .from("customers").update(updateRow as never).eq("id", data.id);
+    if (e2) throw new Error(e2.message);
+    return { ok: true as const, siigo_id: siigoCreated?.id ?? null };
+  });
+
+export const rejectCustomer = createServerFn({ method: "POST" })
+  .middleware([attachAuthHeader, requireSupabaseAuth])
+  .inputValidator((input: unknown) => z.object({
+    id: z.string().uuid(),
+    reason: z.string().trim().min(3).max(500),
+  }).parse(input))
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context.userId);
+    const { error } = await supabaseAdmin
+      .from("customers")
+      .update({
+        approval_status: "rejected",
+        rejection_reason: data.reason,
+        approved_by: context.userId,
+        approved_at: new Date().toISOString(),
+        active: false,
+      } as never)
+      .eq("id", data.id);
     if (error) throw new Error(error.message);
-    return { customer: inserted };
+    return { ok: true as const };
   });
 
 // ---------- AJUSTE DE STOCK (admin) ----------
