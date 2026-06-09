@@ -305,6 +305,11 @@ function OrderDetailPage() {
             <FileText className="w-4 h-4 mr-1" />Facturar
           </Button>
         )}
+        {canLinkInvoice && (
+          <Button size="sm" variant="outline" onClick={() => setLinkOpen(true)} disabled={busy}>
+            <ExternalLink className="w-4 h-4 mr-1" />Vincular factura existente
+          </Button>
+        )}
         {canDispatch && (
           <Button size="sm" onClick={() => run(() => doDispatch({ data: { id } }), "Enviado a reparto")} disabled={busy}>
             <Truck className="w-4 h-4 mr-1" />Enviar a reparto
@@ -336,7 +341,9 @@ function OrderDetailPage() {
         <Card className="p-4 space-y-2">
           <div className="font-medium">Trazabilidad</div>
           <ol className="space-y-2">
-            {handoffs.map((h) => (
+            {handoffs.map((h) => {
+              const showMedia = canSeeHandoffEvidence(h.to_role, h.from_role, viewerRoles);
+              return (
               <li key={h.id} className="text-sm border-l-2 pl-3">
                 <div className="flex items-center gap-2">
                   <Badge variant={h.status === "completed" || h.status === "accepted" ? "secondary" : h.status === "rejected" ? "outline" : "default"}>{h.status}</Badge>
@@ -345,11 +352,13 @@ function OrderDetailPage() {
                 </div>
                 {h.notes && <div className="text-xs italic">{h.notes}</div>}
                 <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                  {h.lat && h.lng && <a href={`https://maps.google.com/?q=${h.lat},${h.lng}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline"><MapPin className="w-3 h-3" />ver mapa</a>}
-                  {h.photo_url && <a href={h.photo_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline"><ImageIcon className="w-3 h-3" />evidencia</a>}
+                  {showMedia && h.lat && h.lng && <a href={`https://maps.google.com/?q=${h.lat},${h.lng}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline"><MapPin className="w-3 h-3" />ver mapa</a>}
+                  {showMedia && h.photo_url && <a href={h.photo_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline"><ImageIcon className="w-3 h-3" />evidencia</a>}
+                  {!showMedia && (h.photo_url || (h.lat && h.lng)) && <span className="italic">Evidencia restringida</span>}
                 </div>
               </li>
-            ))}
+              );
+            })}
           </ol>
         </Card>
       )}
