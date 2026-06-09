@@ -108,7 +108,7 @@ function OrderDetailPage() {
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
-    if (!sendOpen) { setSendUsers([]); setSendUser(""); setSendNotes(""); setSendPhoto(null); return; }
+    if (!sendOpen) { setSendUsers([]); setSendUser(""); setSendNotes(""); setSendPhotoUrls([]); return; }
     fetchUsersByRole({ data: { role: sendOpen } })
       .then((r) => setSendUsers(r.users))
       .catch(() => setSendUsers([]));
@@ -128,6 +128,8 @@ function OrderDetailPage() {
   const canSendConductor = hasRole(["admin", "bodega"]) && order.status === "in_warehouse";
   const canSendCartera = hasRole(["admin", "facturacion"]) && (order.status === "invoiced" || order.status === "delivered");
   const canDeliverCustomer = hasRole(["admin", "facturacion", "bodega", "conductor"]) && ["invoiced", "in_warehouse", "in_transit"].includes(order.status);
+  const canLinkInvoice = hasRole(["admin", "facturacion"]) && !order.siigo_invoice_id && ["draft", "pending", "confirmed"].includes(order.status);
+  const viewerRoles = (roles ?? []) as AppRole[];
 
   const run = async (fn: () => Promise<unknown>, ok: string) => {
     setBusy(true);
@@ -141,30 +143,25 @@ function OrderDetailPage() {
     if (!sendUser) return toast.error("Selecciona el usuario destino");
     setBusy(true);
     try {
-      let photo_url: string | undefined;
-      if (sendPhoto) {
-        const { base64, mime } = await fileToBase64(sendPhoto);
-        const up = await doUpload({ data: { file_base64: base64, mime, folder: `handoffs/${id}` } });
-        photo_url = up.url;
-      }
+      const photo_url = sendPhotoUrls[0];
       const geo = await getGeo();
       await doSend({ data: { order_id: id, to_role: sendOpen, to_user: sendUser, notes: sendNotes || undefined, photo_url, lat: geo.lat, lng: geo.lng, accuracy: geo.accuracy } });
+      if (sendOpen) clearEvidence(`evidence:handoff:${id}:${sendOpen}`);
       toast.success(`Enviado a ${sendOpen}`); load(); setSendOpen(null);
     } catch (e) { toast.error(e instanceof Error ? e.message : "Error"); }
     setBusy(false);
   };
 
   const deliverNow = async () => {
-    if (!delivPhoto) return toast.error("Foto de evidencia requerida");
+    if (delivPhotoUrls.length === 0) return toast.error("Foto de evidencia requerida");
     setBusy(true);
     try {
       const geo = await getGeo();
       if (!geo.lat || !geo.lng) throw new Error("Activa la geolocalización");
-      const { base64, mime } = await fileToBase64(delivPhoto);
-      const up = await doUpload({ data: { file_base64: base64, mime, folder: `orders/${id}` } });
-      await doDeliver({ data: { order_id: id, lat: geo.lat, lng: geo.lng, accuracy: geo.accuracy, notes: delivNotes || undefined, photo_url: up.url } });
+      await doDeliver({ data: { order_id: id, lat: geo.lat, lng: geo.lng, accuracy: geo.accuracy, notes: delivNotes || undefined, photo_url: delivPhotoUrls[0] } });
+      clearEvidence(`evidence:deliver:${id}`);
       toast.success("Entregado al cliente"); load();
-      setDelivOpen(false); setDelivNotes(""); setDelivPhoto(null);
+      setDelivOpen(false); setDelivNotes(""); setDelivPhotoUrls([]);
     } catch (e) { toast.error(e instanceof Error ? e.message : "Error"); }
     setBusy(false);
   };
@@ -173,6 +170,12 @@ function OrderDetailPage() {
     if (reqReason.trim().length < 3) return toast.error("Escribe el motivo");
     await run(() => doRequest({ data: { order_id: id, type: reqType, reason: reqReason.trim() } }), "Solicitud enviada");
     setReqOpen(false); setReqReason("");
+  };
+
+  const submitLinkInvoice = async () => {
+    if (linkInvoiceId.trim().length < 3) return toast.error("Ingresa el ID o número de factura Siigo");
+    await run(() => doLinkInvoice({ data: { order_id: id, invoice_ref: linkInvoiceId.trim() } }), "Factura vinculada");
+    setLinkOpen(false); setLinkInvoiceId("");
   };
 
   return (
