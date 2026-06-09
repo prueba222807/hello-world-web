@@ -10,11 +10,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Loader2, FileText, Truck, ExternalLink, Pencil, ArrowLeft, AlertTriangle, Ban, CheckCircle2, Send, MapPin, ImageIcon, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
-import { getOrder, invoiceOrder, dispatchOrder, cancelOrder, acknowledgeManualPrice } from "@/lib/orders/orders.functions";
+import { getOrder, invoiceOrder, dispatchOrder, cancelOrder, acknowledgeManualPrice, linkExistingSiigoInvoice } from "@/lib/orders/orders.functions";
 import { sendHandoff, deliverToCustomer, listHandoffs, listUsersByRole } from "@/lib/handoffs/handoffs.functions";
 import { createOrderRequest } from "@/lib/orders/requests.functions";
-import { uploadEvidence } from "@/lib/customers/events.functions";
-import { getGeo, fileToBase64 } from "@/lib/geo";
+import { getGeo } from "@/lib/geo";
+import { Input } from "@/components/ui/input";
+import { EvidenceCapture, clearEvidence } from "@/components/flow/EvidenceCapture";
+import { canSeeHandoffEvidence } from "@/lib/order-visibility";
+import type { AppRole } from "@/lib/order-flow";
 import { OrderFlowSection } from "@/components/flow/OrderFlowSection";
 
 export const Route = createFileRoute("/_authenticated/pedidos/$id")({
