@@ -369,10 +369,12 @@ function OrderDetailPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1">
-              <div className="text-xs font-medium">Evidencia (opcional)</div>
-              <input type="file" accept="image/*" capture="environment" onChange={(e) => setSendPhoto(e.target.files?.[0] ?? null)} className="text-sm" />
-            </div>
+            <EvidenceCapture
+              folder={`handoffs/${id}`}
+              persistKey={`evidence:handoff:${id}:${sendOpen ?? "x"}`}
+              label="Evidencia (opcional)"
+              onChange={setSendPhotoUrls}
+            />
             <Textarea placeholder="Notas (opcional)" value={sendNotes} onChange={(e) => setSendNotes(e.target.value)} />
           </div>
           <DialogFooter>
@@ -386,11 +388,17 @@ function OrderDetailPage() {
         <DialogContent>
           <DialogHeader><DialogTitle>Entregar al cliente</DialogTitle></DialogHeader>
           <p className="text-xs text-muted-foreground">Se capturará tu ubicación actual y la foto de evidencia.</p>
-          <input type="file" accept="image/*" capture="environment" onChange={(e) => setDelivPhoto(e.target.files?.[0] ?? null)} className="text-sm" />
+          <EvidenceCapture
+            folder={`orders/${id}`}
+            persistKey={`evidence:deliver:${id}`}
+            label="Foto entrega"
+            required
+            onChange={setDelivPhotoUrls}
+          />
           <Textarea placeholder="Notas (opcional)" value={delivNotes} onChange={(e) => setDelivNotes(e.target.value)} />
           <DialogFooter>
             <Button variant="outline" onClick={() => setDelivOpen(false)}>Cancelar</Button>
-            <Button onClick={deliverNow} disabled={busy || !delivPhoto}>Confirmar entrega</Button>
+            <Button onClick={deliverNow} disabled={busy || delivPhotoUrls.length === 0}>Confirmar entrega</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
