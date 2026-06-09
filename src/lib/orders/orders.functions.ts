@@ -577,3 +577,87 @@ export const cancelOrder = createServerFn({ method: "POST" })
 
 // Compat: alias para compatibilidad con código anterior
 export const createOrder = saveOrder;
+
+// ------------------------------------------------------------
+// Vincular una factura ya existente en Siigo a un pedido local.
+// Útil cuando facturación ya emitió la factura por fuera (Siigo Nube)
+// y solo queremos asociarla al pedido para activar el flujo operativo.
+// Acepta el ID UUID de la factura o el número (ej. "FV-1234").
+// ------------------------------------------------------------
+
+interface SiigoInvoiceLookup {
+  id: string;
+  number?: number | null;
+  name?: string | null;
+  prefix?: string | null;
+  consecutive?: number | null;
+  public_url?: string | null;
+  metadata?: { public_url?: string | null } | null;
+  total?: number | null;
+}
+
+export const linkExistingSiigoInvoice = createServerFn({ method: "POST" })
+  .middleware([attachAuthHeader, requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z.object({
+      order_id: z.string().uuid(),
+      invoice_ref: z.string().trim().min(3).max(120),
+    }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    if (!(await hasAnyRole(context.userId, ["admin", "facturacion"]))) {
+      throw new Response("Forbidden", { status: 403 });
+    }
+
+    const { data: order, error: orderErr } = await supabaseAdmin
+      .from("orders")
+      .select("id, status, siigo_invoice_id")
+      .eq("id", data.order_id)
+      .maybeSingle();
+    if (orderErr) throw new Error(orderErr.message);
+    if (!order) throw new Error("Pedido no encontrado");
+    if (order.siigo_invoice_id) throw new Error("Este pedido ya está vinculado a una factura.");
+
+    // 1) Si parece un UUID, intentamos GET directo.
+    const isUuid = /^[0-9a-fA-F-]{32,36}$/.test(data.invoice_ref);
+    let invoice: SiigoInvoiceLookup | null = null;
+    try {
+      if (isUuid) {
+        invoice = await SiigoClient.request<SiigoInvoiceLookup>({
+          method: "GET",
+          path: `/v1/invoices/${data.invoice_ref}`,
+        });
+      } else {
+        // Buscar por número/nombre: /v1/invoices?name=FV-1234 (o number)
+        const resp = await SiigoClient.request<{ results?: SiigoInvoiceLookup[] }>({
+          method: "GET",
+          path: "/v1/invoices",
+          query: { name: data.invoice_ref, page_size: 5 },
+        });
+        invoice = resp?.results?.[0] ?? null;
+      }
+    } catch (e) {
+      if (e instanceof SiigoApiError) {
+        throw new Error(`Siigo no encontró la factura [${e.status}]: ${(e.body ?? "").slice(0, 250)}`);
+      }
+      throw e;
+    }
+
+    if (!invoice?.id) throw new Error("No se encontró ninguna factura en Siigo con ese ID o número.");
+
+    const publicUrl = invoice.public_url ?? invoice.metadata?.public_url ?? null;
+    const number = invoice.name ?? (invoice.number != null ? String(invoice.number) : null);
+
+    const { error: updErr } = await supabaseAdmin.from("orders").update({
+      status: "invoiced",
+      siigo_invoice_id: invoice.id,
+      siigo_invoice_number: number,
+      siigo_invoice_prefix: invoice.prefix ?? null,
+      siigo_invoice_consecutive: invoice.consecutive ?? null,
+      invoice_pdf_url: publicUrl,
+      invoiced_at: new Date().toISOString(),
+    }).eq("id", order.id);
+    if (updErr) throw new Error(updErr.message);
+
+    return { ok: true, invoice_id: invoice.id, number, public_url: publicUrl };
+  });
