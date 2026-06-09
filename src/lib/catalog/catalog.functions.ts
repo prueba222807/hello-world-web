@@ -49,7 +49,7 @@ export const listCustomers = createServerFn({ method: "GET" })
     }
     let q = supabaseAdmin
       .from("customers")
-      .select("id, siigo_id, identification, display_name, commercial_name, email, phone, address, city_name, state_name, active, seller_siigo_id, created_by_user")
+      .select("id, siigo_id, identification, display_name, commercial_name, email, phone, address, city_name, state_name, active, seller_siigo_id, created_by_user, approval_status")
       .order("display_name", { ascending: true })
       .limit(data.limit);
     if (data.search) {
@@ -64,6 +64,8 @@ export const listCustomers = createServerFn({ method: "GET" })
       q = q.eq("seller_siigo_id", data.seller_id);
     }
     if (typeof data.active === "boolean") q = q.eq("active", data.active);
+    // Por defecto ocultar rechazados del listado normal.
+    q = q.neq("approval_status", "rejected");
     const { data: rows, error } = await q;
     if (error) throw new Error(error.message);
     return { customers: rows ?? [] };
@@ -90,10 +92,25 @@ export const listProducts = createServerFn({ method: "GET" })
     const { data: rows, error } = await q;
     if (error) throw new Error(error.message);
     type Row = (typeof rows extends Array<infer T> ? T : never);
+    // Cargar reservas (pedidos confirmados sin facturar)
+    const ids = ((rows ?? []) as Row[]).map((r) => (r as { id: string }).id);
+    let reservedMap = new Map<string, number>();
+    if (ids.length > 0) {
+      const { data: resv } = await supabaseAdmin
+        .from("product_reservations")
+        .select("product_id, reserved_qty")
+        .in("product_id", ids);
+      for (const r of (resv ?? []) as Array<{ product_id: string; reserved_qty: number | string }>) {
+        reservedMap.set(r.product_id, Number(r.reserved_qty) || 0);
+      }
+    }
     const mapped = ((rows ?? []) as Row[]).map((r) => {
-      const override = (r as { stock_override: number | null }).stock_override;
-      const baseStock = (r as { stock: number | null }).stock;
-      return { ...r, stock: override != null ? Number(override) : baseStock };
+      const row = r as { id: string; stock_override: number | null; stock: number | null };
+      const override = row.stock_override;
+      const baseStock = override != null ? Number(override) : row.stock;
+      const reserved = reservedMap.get(row.id) ?? 0;
+      const available = baseStock != null ? Math.max(0, Number(baseStock) - reserved) : null;
+      return { ...r, stock: available, stock_reserved: reserved, stock_base: baseStock };
     });
     const filtered = data.inStockOnly ? mapped.filter((p) => (p.stock ?? 0) > 0) : mapped;
     return { products: filtered };
