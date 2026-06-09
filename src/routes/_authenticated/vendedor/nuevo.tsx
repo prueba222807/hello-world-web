@@ -105,6 +105,7 @@ function NuevoPedidoPage() {
   const [newCustomerOpen, setNewCustomerOpen] = useState(false);
   const [newCustomer, setNewCustomer] = useState({
     identification: "", display_name: "", email: "", phone: "", address: "", city_name: "",
+    first_name: "", last_name: "", commercial_name: "",
     person_type: "Person" as "Person" | "Company",
     id_type: "13",
   });
@@ -397,38 +398,74 @@ function NuevoPedidoPage() {
                       value={newCustomer.id_type}
                       onChange={(e) => setNewCustomer((s) => ({ ...s, id_type: e.target.value }))}
                     >
-                      <option value="13">Cédula (13)</option>
-                      <option value="22">Cédula extranjería (22)</option>
-                      <option value="31">NIT (31)</option>
-                      <option value="41">Pasaporte (41)</option>
+                      {newCustomer.person_type === "Person" ? (
+                        <>
+                          <option value="13">Cédula de ciudadanía (CC)</option>
+                          <option value="22">Cédula de extranjería (CE)</option>
+                          <option value="41">Pasaporte</option>
+                          <option value="42">Doc. identificación extranjero</option>
+                          <option value="50">NIT otro país</option>
+                          <option value="91">NUIP</option>
+                          <option value="11">Registro civil</option>
+                          <option value="12">Tarjeta de identidad</option>
+                          <option value="21">Tarjeta de extranjería</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="31">NIT</option>
+                          <option value="50">NIT otro país</option>
+                        </>
+                      )}
                     </select>
                   </div>
                 </div>
                 <div>
-                  <Label className="text-xs">Identificación / NIT *</Label>
+                  <Label className="text-xs">{newCustomer.person_type === "Company" ? "NIT *" : "Número de documento *"}</Label>
                   <Input value={newCustomer.identification} onChange={(e) => setNewCustomer((s) => ({ ...s, identification: e.target.value }))} />
                 </div>
-                <div>
-                  <Label className="text-xs">Nombre o razón social *</Label>
-                  <Input value={newCustomer.display_name} onChange={(e) => setNewCustomer((s) => ({ ...s, display_name: e.target.value }))} />
-                </div>
+                {newCustomer.person_type === "Person" ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label className="text-xs">Nombres *</Label>
+                      <Input value={newCustomer.first_name} onChange={(e) => setNewCustomer((s) => ({ ...s, first_name: e.target.value, display_name: `${e.target.value} ${s.last_name}`.trim() }))} />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Apellidos *</Label>
+                      <Input value={newCustomer.last_name} onChange={(e) => setNewCustomer((s) => ({ ...s, last_name: e.target.value, display_name: `${s.first_name} ${e.target.value}`.trim() }))} />
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div>
+                      <Label className="text-xs">Razón social *</Label>
+                      <Input value={newCustomer.display_name} onChange={(e) => setNewCustomer((s) => ({ ...s, display_name: e.target.value }))} />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Nombre comercial</Label>
+                      <Input value={newCustomer.commercial_name} onChange={(e) => setNewCustomer((s) => ({ ...s, commercial_name: e.target.value }))} />
+                    </div>
+                  </>
+                )}
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <Label className="text-xs">Teléfono</Label>
+                    <Label className="text-xs">Teléfono *</Label>
                     <Input value={newCustomer.phone} onChange={(e) => setNewCustomer((s) => ({ ...s, phone: e.target.value }))} />
                   </div>
                   <div>
-                    <Label className="text-xs">Ciudad</Label>
+                    <Label className="text-xs">Ciudad *</Label>
                     <Input value={newCustomer.city_name} onChange={(e) => setNewCustomer((s) => ({ ...s, city_name: e.target.value }))} />
                   </div>
                 </div>
                 <div>
-                  <Label className="text-xs">Email</Label>
+                  <Label className="text-xs">Email *</Label>
                   <Input type="email" value={newCustomer.email} onChange={(e) => setNewCustomer((s) => ({ ...s, email: e.target.value }))} />
                 </div>
                 <div>
-                  <Label className="text-xs">Dirección</Label>
+                  <Label className="text-xs">Dirección *</Label>
                   <Input value={newCustomer.address} onChange={(e) => setNewCustomer((s) => ({ ...s, address: e.target.value }))} />
+                </div>
+                <div className="text-[11px] text-muted-foreground bg-amber-500/10 border border-amber-500/30 rounded p-2">
+                  El cliente quedará en <strong>pendiente de aprobación</strong>. Podrás crear el pedido normalmente, pero el área de facturación no podrá facturarlo hasta que el administrador apruebe el tercero y se cree en Siigo.
                 </div>
               </div>
               <DialogFooter className="gap-2">
@@ -436,7 +473,57 @@ function NuevoPedidoPage() {
                 <Button
                   disabled={creatingCustomer}
                   onClick={async () => {
-                    if (!newCustomer.identification.trim() || !newCustomer.display_name.trim()) {
+                    const isPerson = newCustomer.person_type === "Person";
+                    const display = isPerson
+                      ? `${newCustomer.first_name} ${newCustomer.last_name}`.trim()
+                      : newCustomer.display_name.trim();
+                    if (!newCustomer.identification.trim()) return toast.error("El número de documento es obligatorio");
+                    if (isPerson && (!newCustomer.first_name.trim() || !newCustomer.last_name.trim())) {
+                      return toast.error("Nombres y apellidos son obligatorios");
+                    }
+                    if (!isPerson && !display) return toast.error("La razón social es obligatoria");
+                    if (!newCustomer.phone.trim()) return toast.error("Teléfono obligatorio");
+                    if (!newCustomer.email.trim()) return toast.error("Email obligatorio");
+                    if (!newCustomer.address.trim()) return toast.error("Dirección obligatoria");
+                    if (!newCustomer.city_name.trim()) return toast.error("Ciudad obligatoria");
+                    setCreatingCustomer(true);
+                    try {
+                      const r = await createCustomerFn({ data: {
+                        identification: newCustomer.identification.trim(),
+                        display_name: display,
+                        person_type: newCustomer.person_type,
+                        id_type: newCustomer.id_type,
+                        first_name: isPerson ? newCustomer.first_name.trim() : undefined,
+                        last_name: isPerson ? newCustomer.last_name.trim() : undefined,
+                        commercial_name: !isPerson && newCustomer.commercial_name.trim() ? newCustomer.commercial_name.trim() : undefined,
+                        email: newCustomer.email.trim() || undefined,
+                        phone: newCustomer.phone.trim() || undefined,
+                        address: newCustomer.address.trim() || undefined,
+                        city_name: newCustomer.city_name.trim() || undefined,
+                      }});
+                      toast.success("Cliente enviado a aprobación. Puedes continuar con el pedido.");
+                      setNewCustomerOpen(false);
+                      setNewCustomer({ identification: "", display_name: "", email: "", phone: "", address: "", city_name: "", first_name: "", last_name: "", commercial_name: "", person_type: "Person", id_type: "13" });
+                      setCustomer(r.customer as Customer);
+                      setStep("items");
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : "Error");
+                    } finally { setCreatingCustomer(false); }
+                  }}
+                >{creatingCustomer ? <Loader2 className="w-4 h-4 animate-spin" /> : "Solicitar y continuar"}</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </>
+      )}
+
+      {false && (
+        <Dialog open={false} onOpenChange={() => {}}>
+          <DialogContent>
+            <DialogFooter className="gap-2">
+              <Button
+                onClick={async () => {
+                  if (!newCustomer.identification.trim() || !newCustomer.display_name.trim()) {
                       toast.error("Identificación y nombre son obligatorios");
                       return;
                     }
@@ -454,18 +541,17 @@ function NuevoPedidoPage() {
                       }});
                       toast.success("Cliente creado");
                       setNewCustomerOpen(false);
-                      setNewCustomer({ identification: "", display_name: "", email: "", phone: "", address: "", city_name: "", person_type: "Person", id_type: "13" });
+                      setNewCustomer({ identification: "", display_name: "", email: "", phone: "", address: "", city_name: "", first_name: "", last_name: "", commercial_name: "", person_type: "Person", id_type: "13" });
                       setCustomer(r.customer as Customer);
                       setStep("items");
                     } catch (e) {
                       toast.error(e instanceof Error ? e.message : "Error");
                     } finally { setCreatingCustomer(false); }
                   }}
-                >{creatingCustomer ? <Loader2 className="w-4 h-4 animate-spin" /> : "Crear y continuar"}</Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        </>
+              >{creatingCustomer ? <Loader2 className="w-4 h-4 animate-spin" /> : "Crear y continuar"}</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
 
       {step === "items" && customer && (
