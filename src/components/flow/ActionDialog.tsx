@@ -5,13 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, MapPin, Camera } from "lucide-react";
+import { Loader2, MapPin } from "lucide-react";
 import { toast } from "sonner";
 import { SignaturePad } from "./SignaturePad";
 import { executeAction, uploadSignature } from "@/lib/orders/flow.functions";
 import { listUsersByRole } from "@/lib/handoffs/handoffs.functions";
-import { uploadEvidence } from "@/lib/customers/events.functions";
-import { getGeo, fileToBase64 } from "@/lib/geo";
+import { getGeo } from "@/lib/geo";
+import { EvidenceCapture, clearEvidence } from "./EvidenceCapture";
 import type { NextAction } from "@/lib/order-flow";
 
 interface Props {
@@ -25,7 +25,6 @@ interface Props {
 export function ActionDialog({ orderId, action, confirmationMode, onClose, onDone }: Props) {
   const doExec = useServerFn(executeAction);
   const doSig = useServerFn(uploadSignature);
-  const doUp = useServerFn(uploadEvidence);
   const fetchUsers = useServerFn(listUsersByRole);
   const [busy, setBusy] = useState(false);
   const [receiverId, setReceiverId] = useState("");
@@ -33,15 +32,16 @@ export function ActionDialog({ orderId, action, confirmationMode, onClose, onDon
   const [observations, setObservations] = useState("");
   const [visibleDate, setVisibleDate] = useState("");
   const [signature, setSignature] = useState<string | null>(null);
-  const [photos, setPhotos] = useState<File[]>([]);
+  const [photoUrls, setPhotoUrls] = useState<string[]>([]);
   const [geo, setGeoState] = useState<{ lat: number | null; lng: number | null; accuracy: number | null }>({ lat: null, lng: null, accuracy: null });
 
   const open = !!action;
+  const persistKey = action ? `evidence:flow:${orderId}:${action.key}` : "";
 
   useEffect(() => {
     if (!open) {
       setReceiverId(""); setUsers([]); setObservations(""); setVisibleDate("");
-      setSignature(null); setPhotos([]); setGeoState({ lat: null, lng: null, accuracy: null });
+      setSignature(null); setPhotoUrls([]); setGeoState({ lat: null, lng: null, accuracy: null });
       return;
     }
     if (action?.receiverRole) {
@@ -65,29 +65,24 @@ export function ActionDialog({ orderId, action, confirmationMode, onClose, onDon
         if (!g.lat || !g.lng) throw new Error("Activa la geolocalización");
         setGeoState(g);
       }
-      if (action.requiresPhoto && photos.length === 0) throw new Error("Foto de evidencia requerida");
+      if (action.requiresPhoto && photoUrls.length === 0) throw new Error("Foto de evidencia requerida");
 
       let signature_url: string | undefined;
       if (needsSignature && signature) {
         const r = await doSig({ data: { data_url: signature, folder: "signatures" } });
         signature_url = r.url;
       }
-      const photo_urls: string[] = [];
-      for (const f of photos) {
-        const { base64, mime } = await fileToBase64(f);
-        const up = await doUp({ data: { file_base64: base64, mime, folder: `orders/${orderId}` } });
-        photo_urls.push(up.url);
-      }
       await doExec({ data: {
         order_id: orderId,
         action_key: action.key,
         receiver_id: receiverId || null,
         signature_url: signature_url ?? null,
-        photo_urls,
+        photo_urls: photoUrls,
         observations: observations || undefined,
         visible_date: visibleDate || undefined,
         lat: geo.lat, lng: geo.lng, accuracy: geo.accuracy,
       } });
+      if (persistKey) clearEvidence(persistKey);
       toast.success(confirmationMode === "acceptance" && action.needsReceiver ? "Transferencia enviada (pendiente aceptación)" : "Acción registrada");
       onDone(); onClose();
     } catch (e) {
@@ -121,11 +116,14 @@ export function ActionDialog({ orderId, action, confirmationMode, onClose, onDon
             <Input type="datetime-local" value={visibleDate} onChange={(e) => setVisibleDate(e.target.value)} />
           </div>
           {action.requiresPhoto && (
-            <div className="space-y-1">
-              <label className="text-xs font-medium flex items-center gap-1"><Camera className="w-3 h-3" /> Foto evidencia (obligatoria)</label>
-              <Input type="file" accept="image/*" capture="environment" multiple onChange={(e) => setPhotos(Array.from(e.target.files ?? []))} />
-              {photos.length > 0 && <div className="text-xs text-muted-foreground">{photos.length} foto(s) seleccionadas</div>}
-            </div>
+            <EvidenceCapture
+              folder={`orders/${orderId}`}
+              persistKey={persistKey}
+              multiple
+              required
+              label="Foto evidencia"
+              onChange={setPhotoUrls}
+            />
           )}
           {action.requiresGeo && (
             <div className="text-xs flex items-center gap-1 text-muted-foreground">

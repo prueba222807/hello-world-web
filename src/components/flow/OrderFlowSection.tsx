@@ -100,7 +100,13 @@ export function OrderFlowSection({ orderId, status, pendingHolderUser, sellerId,
       {loading ? (
         <div className="grid place-items-center py-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
       ) : (
-        <FlowTimeline events={tl.events} evidences={tl.evidences} profiles={tl.profiles} />
+        <FlowTimeline
+          events={tl.events}
+          evidences={tl.evidences}
+          profiles={tl.profiles}
+          viewerRoles={myRoles}
+          viewerId={user?.id ?? null}
+        />
       )}
 
       <ActionDialog

@@ -10,11 +10,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Loader2, FileText, Truck, ExternalLink, Pencil, ArrowLeft, AlertTriangle, Ban, CheckCircle2, Send, MapPin, ImageIcon, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
-import { getOrder, invoiceOrder, dispatchOrder, cancelOrder, acknowledgeManualPrice } from "@/lib/orders/orders.functions";
+import { getOrder, invoiceOrder, dispatchOrder, cancelOrder, acknowledgeManualPrice, linkExistingSiigoInvoice } from "@/lib/orders/orders.functions";
 import { sendHandoff, deliverToCustomer, listHandoffs, listUsersByRole } from "@/lib/handoffs/handoffs.functions";
 import { createOrderRequest } from "@/lib/orders/requests.functions";
-import { uploadEvidence } from "@/lib/customers/events.functions";
-import { getGeo, fileToBase64 } from "@/lib/geo";
+import { getGeo } from "@/lib/geo";
+import { Input } from "@/components/ui/input";
+import { EvidenceCapture, clearEvidence } from "@/components/flow/EvidenceCapture";
+import { canSeeHandoffEvidence } from "@/lib/order-visibility";
+import type { AppRole } from "@/lib/order-flow";
 import { OrderFlowSection } from "@/components/flow/OrderFlowSection";
 
 export const Route = createFileRoute("/_authenticated/pedidos/$id")({
@@ -56,7 +59,7 @@ type OrderDetail = {
 
 function OrderDetailPage() {
   const { id } = Route.useParams();
-  const { user, hasRole } = useAuth();
+  const { user, hasRole, roles } = useAuth();
   const router = useRouter();
   const fetchOrder = useServerFn(getOrder);
   const doInvoice = useServerFn(invoiceOrder);
@@ -67,8 +70,8 @@ function OrderDetailPage() {
   const doDeliver = useServerFn(deliverToCustomer);
   const fetchHandoffs = useServerFn(listHandoffs);
   const doRequest = useServerFn(createOrderRequest);
-  const doUpload = useServerFn(uploadEvidence);
   const fetchUsersByRole = useServerFn(listUsersByRole);
+  const doLinkInvoice = useServerFn(linkExistingSiigoInvoice);
 
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -80,11 +83,13 @@ function OrderDetailPage() {
   const [sendOpen, setSendOpen] = useState<null | "bodega" | "conductor" | "facturacion" | "cartera">(null);
   const [sendNotes, setSendNotes] = useState("");
   const [sendUser, setSendUser] = useState<string>("");
-  const [sendPhoto, setSendPhoto] = useState<File | null>(null);
+  const [sendPhotoUrls, setSendPhotoUrls] = useState<string[]>([]);
   const [sendUsers, setSendUsers] = useState<Array<{ id: string; full_name: string | null; email: string | null }>>([]);
   const [delivOpen, setDelivOpen] = useState(false);
   const [delivNotes, setDelivNotes] = useState("");
-  const [delivPhoto, setDelivPhoto] = useState<File | null>(null);
+  const [delivPhotoUrls, setDelivPhotoUrls] = useState<string[]>([]);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkInvoiceId, setLinkInvoiceId] = useState("");
 
   const load = useCallback(() => {
     setLoading(true);
@@ -103,7 +108,7 @@ function OrderDetailPage() {
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
-    if (!sendOpen) { setSendUsers([]); setSendUser(""); setSendNotes(""); setSendPhoto(null); return; }
+    if (!sendOpen) { setSendUsers([]); setSendUser(""); setSendNotes(""); setSendPhotoUrls([]); return; }
     fetchUsersByRole({ data: { role: sendOpen } })
       .then((r) => setSendUsers(r.users))
       .catch(() => setSendUsers([]));
@@ -123,6 +128,8 @@ function OrderDetailPage() {
   const canSendConductor = hasRole(["admin", "bodega"]) && order.status === "in_warehouse";
   const canSendCartera = hasRole(["admin", "facturacion"]) && (order.status === "invoiced" || order.status === "delivered");
   const canDeliverCustomer = hasRole(["admin", "facturacion", "bodega", "conductor"]) && ["invoiced", "in_warehouse", "in_transit"].includes(order.status);
+  const canLinkInvoice = hasRole(["admin", "facturacion"]) && !order.siigo_invoice_id && ["draft", "pending", "confirmed"].includes(order.status);
+  const viewerRoles = (roles ?? []) as AppRole[];
 
   const run = async (fn: () => Promise<unknown>, ok: string) => {
     setBusy(true);
@@ -136,30 +143,25 @@ function OrderDetailPage() {
     if (!sendUser) return toast.error("Selecciona el usuario destino");
     setBusy(true);
     try {
-      let photo_url: string | undefined;
-      if (sendPhoto) {
-        const { base64, mime } = await fileToBase64(sendPhoto);
-        const up = await doUpload({ data: { file_base64: base64, mime, folder: `handoffs/${id}` } });
-        photo_url = up.url;
-      }
+      const photo_url = sendPhotoUrls[0];
       const geo = await getGeo();
       await doSend({ data: { order_id: id, to_role: sendOpen, to_user: sendUser, notes: sendNotes || undefined, photo_url, lat: geo.lat, lng: geo.lng, accuracy: geo.accuracy } });
+      if (sendOpen) clearEvidence(`evidence:handoff:${id}:${sendOpen}`);
       toast.success(`Enviado a ${sendOpen}`); load(); setSendOpen(null);
     } catch (e) { toast.error(e instanceof Error ? e.message : "Error"); }
     setBusy(false);
   };
 
   const deliverNow = async () => {
-    if (!delivPhoto) return toast.error("Foto de evidencia requerida");
+    if (delivPhotoUrls.length === 0) return toast.error("Foto de evidencia requerida");
     setBusy(true);
     try {
       const geo = await getGeo();
       if (!geo.lat || !geo.lng) throw new Error("Activa la geolocalización");
-      const { base64, mime } = await fileToBase64(delivPhoto);
-      const up = await doUpload({ data: { file_base64: base64, mime, folder: `orders/${id}` } });
-      await doDeliver({ data: { order_id: id, lat: geo.lat, lng: geo.lng, accuracy: geo.accuracy, notes: delivNotes || undefined, photo_url: up.url } });
+      await doDeliver({ data: { order_id: id, lat: geo.lat, lng: geo.lng, accuracy: geo.accuracy, notes: delivNotes || undefined, photo_url: delivPhotoUrls[0] } });
+      clearEvidence(`evidence:deliver:${id}`);
       toast.success("Entregado al cliente"); load();
-      setDelivOpen(false); setDelivNotes(""); setDelivPhoto(null);
+      setDelivOpen(false); setDelivNotes(""); setDelivPhotoUrls([]);
     } catch (e) { toast.error(e instanceof Error ? e.message : "Error"); }
     setBusy(false);
   };
@@ -168,6 +170,12 @@ function OrderDetailPage() {
     if (reqReason.trim().length < 3) return toast.error("Escribe el motivo");
     await run(() => doRequest({ data: { order_id: id, type: reqType, reason: reqReason.trim() } }), "Solicitud enviada");
     setReqOpen(false); setReqReason("");
+  };
+
+  const submitLinkInvoice = async () => {
+    if (linkInvoiceId.trim().length < 3) return toast.error("Ingresa el ID o número de factura Siigo");
+    await run(() => doLinkInvoice({ data: { order_id: id, invoice_ref: linkInvoiceId.trim() } }), "Factura vinculada");
+    setLinkOpen(false); setLinkInvoiceId("");
   };
 
   return (
@@ -297,6 +305,11 @@ function OrderDetailPage() {
             <FileText className="w-4 h-4 mr-1" />Facturar
           </Button>
         )}
+        {canLinkInvoice && (
+          <Button size="sm" variant="outline" onClick={() => setLinkOpen(true)} disabled={busy}>
+            <ExternalLink className="w-4 h-4 mr-1" />Vincular factura existente
+          </Button>
+        )}
         {canDispatch && (
           <Button size="sm" onClick={() => run(() => doDispatch({ data: { id } }), "Enviado a reparto")} disabled={busy}>
             <Truck className="w-4 h-4 mr-1" />Enviar a reparto
@@ -328,7 +341,9 @@ function OrderDetailPage() {
         <Card className="p-4 space-y-2">
           <div className="font-medium">Trazabilidad</div>
           <ol className="space-y-2">
-            {handoffs.map((h) => (
+            {handoffs.map((h) => {
+              const showMedia = canSeeHandoffEvidence(h.to_role, h.from_role, viewerRoles);
+              return (
               <li key={h.id} className="text-sm border-l-2 pl-3">
                 <div className="flex items-center gap-2">
                   <Badge variant={h.status === "completed" || h.status === "accepted" ? "secondary" : h.status === "rejected" ? "outline" : "default"}>{h.status}</Badge>
@@ -337,11 +352,13 @@ function OrderDetailPage() {
                 </div>
                 {h.notes && <div className="text-xs italic">{h.notes}</div>}
                 <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                  {h.lat && h.lng && <a href={`https://maps.google.com/?q=${h.lat},${h.lng}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline"><MapPin className="w-3 h-3" />ver mapa</a>}
-                  {h.photo_url && <a href={h.photo_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline"><ImageIcon className="w-3 h-3" />evidencia</a>}
+                  {showMedia && h.lat && h.lng && <a href={`https://maps.google.com/?q=${h.lat},${h.lng}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline"><MapPin className="w-3 h-3" />ver mapa</a>}
+                  {showMedia && h.photo_url && <a href={h.photo_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline"><ImageIcon className="w-3 h-3" />evidencia</a>}
+                  {!showMedia && (h.photo_url || (h.lat && h.lng)) && <span className="italic">Evidencia restringida</span>}
                 </div>
               </li>
-            ))}
+              );
+            })}
           </ol>
         </Card>
       )}
@@ -361,10 +378,12 @@ function OrderDetailPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1">
-              <div className="text-xs font-medium">Evidencia (opcional)</div>
-              <input type="file" accept="image/*" capture="environment" onChange={(e) => setSendPhoto(e.target.files?.[0] ?? null)} className="text-sm" />
-            </div>
+            <EvidenceCapture
+              folder={`handoffs/${id}`}
+              persistKey={`evidence:handoff:${id}:${sendOpen ?? "x"}`}
+              label="Evidencia (opcional)"
+              onChange={setSendPhotoUrls}
+            />
             <Textarea placeholder="Notas (opcional)" value={sendNotes} onChange={(e) => setSendNotes(e.target.value)} />
           </div>
           <DialogFooter>
@@ -378,11 +397,17 @@ function OrderDetailPage() {
         <DialogContent>
           <DialogHeader><DialogTitle>Entregar al cliente</DialogTitle></DialogHeader>
           <p className="text-xs text-muted-foreground">Se capturará tu ubicación actual y la foto de evidencia.</p>
-          <input type="file" accept="image/*" capture="environment" onChange={(e) => setDelivPhoto(e.target.files?.[0] ?? null)} className="text-sm" />
+          <EvidenceCapture
+            folder={`orders/${id}`}
+            persistKey={`evidence:deliver:${id}`}
+            label="Foto entrega"
+            required
+            onChange={setDelivPhotoUrls}
+          />
           <Textarea placeholder="Notas (opcional)" value={delivNotes} onChange={(e) => setDelivNotes(e.target.value)} />
           <DialogFooter>
             <Button variant="outline" onClick={() => setDelivOpen(false)}>Cancelar</Button>
-            <Button onClick={deliverNow} disabled={busy || !delivPhoto}>Confirmar entrega</Button>
+            <Button onClick={deliverNow} disabled={busy || delivPhotoUrls.length === 0}>Confirmar entrega</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -398,6 +423,21 @@ function OrderDetailPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setReqOpen(false)}>Cancelar</Button>
             <Button onClick={submitRequest} disabled={busy}>Enviar solicitud</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={linkOpen} onOpenChange={setLinkOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Vincular factura existente de Siigo</DialogTitle></DialogHeader>
+          <p className="text-xs text-muted-foreground">
+            Si la factura ya fue emitida en Siigo (por otro medio), pega aquí el <strong>ID</strong> o el <strong>número</strong>
+            (ej. <code>FV-1234</code>) y la vinculamos al pedido sin volver a facturar.
+          </p>
+          <Input placeholder="ID UUID o número (FV-1234)" value={linkInvoiceId} onChange={(e) => setLinkInvoiceId(e.target.value)} />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLinkOpen(false)}>Cancelar</Button>
+            <Button onClick={submitLinkInvoice} disabled={busy}>Vincular</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -9,9 +9,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Loader2, Search, Users, MapPin, History, Wallet, Phone, Mail, FileText, Receipt, Package, ExternalLink, Camera, ChevronRight, CheckCircle2, AlertTriangle, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { listCustomers } from "@/lib/catalog/catalog.functions";
-import { listEventTypes, createCustomerEvent, listCustomerEvents, uploadEvidence } from "@/lib/customers/events.functions";
+import { listEventTypes, createCustomerEvent, listCustomerEvents } from "@/lib/customers/events.functions";
 import { getCustomerFinancials, type CustomerInvoice } from "@/lib/customers/financials.functions";
-import { getGeo, fileToBase64 } from "@/lib/geo";
+import { getGeo } from "@/lib/geo";
+import { EvidenceCapture, clearEvidence } from "@/components/flow/EvidenceCapture";
 
 export const Route = createFileRoute("/_authenticated/vendedor/clientes")({
   component: ClientesPage,
@@ -41,7 +42,6 @@ function ClientesPage() {
   const fetchTypes = useServerFn(listEventTypes);
   const createEvent = useServerFn(createCustomerEvent);
   const fetchEvents = useServerFn(listCustomerEvents);
-  const doUpload = useServerFn(uploadEvidence);
   const fetchFinancials = useServerFn(getCustomerFinancials);
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<Customer[]>([]);
@@ -50,7 +50,7 @@ function ClientesPage() {
   const [evtCustomer, setEvtCustomer] = useState<Customer | null>(null);
   const [evtType, setEvtType] = useState<string>("");
   const [evtNotes, setEvtNotes] = useState("");
-  const [evtPhoto, setEvtPhoto] = useState<File | null>(null);
+  const [evtPhotoUrls, setEvtPhotoUrls] = useState<string[]>([]);
   const [evtBusy, setEvtBusy] = useState(false);
   const [historyCustomer, setHistoryCustomer] = useState<Customer | null>(null);
   const [history, setHistory] = useState<CustomerEvent[]>([]);
@@ -80,15 +80,11 @@ function ClientesPage() {
     setEvtBusy(true);
     try {
       const geo = await getGeo();
-      let photo_url: string | null = null;
-      if (evtPhoto) {
-        const { base64, mime } = await fileToBase64(evtPhoto);
-        const up = await doUpload({ data: { file_base64: base64, mime, folder: `events/${evtCustomer.id}` } });
-        photo_url = up.url;
-      }
+      const photo_url = evtPhotoUrls[0] ?? null;
       await createEvent({ data: { customer_id: evtCustomer.id, event_type: evtType, notes: evtNotes || undefined, lat: geo.lat, lng: geo.lng, accuracy: geo.accuracy, photo_url } });
       toast.success("Evento registrado");
-      setEvtCustomer(null); setEvtType(""); setEvtNotes(""); setEvtPhoto(null);
+      if (evtCustomer) clearEvidence(`evidence:visit:${evtCustomer.id}`);
+      setEvtCustomer(null); setEvtType(""); setEvtNotes(""); setEvtPhotoUrls([]);
     } catch (e) { toast.error(e instanceof Error ? e.message : "Error"); }
     setEvtBusy(false);
   };
@@ -188,11 +184,14 @@ function ClientesPage() {
               ))}
             </div>
             <Textarea placeholder="Notas (opcional)" value={evtNotes} onChange={(e) => setEvtNotes(e.target.value)} className="rounded-xl" rows={3} />
-            <label className="flex items-center gap-2 p-3 rounded-xl border border-dashed cursor-pointer hover:bg-accent/30 text-sm">
-              <Camera className="w-4 h-4 text-muted-foreground" />
-              <span className="flex-1 truncate">{evtPhoto ? evtPhoto.name : "Adjuntar evidencia (opcional)"}</span>
-              <input type="file" accept="image/*" capture="environment" onChange={(e) => setEvtPhoto(e.target.files?.[0] ?? null)} className="hidden" />
-            </label>
+            {evtCustomer && (
+              <EvidenceCapture
+                folder={`events/${evtCustomer.id}`}
+                persistKey={`evidence:visit:${evtCustomer.id}`}
+                label="Evidencia (opcional)"
+                onChange={setEvtPhotoUrls}
+              />
+            )}
             <p className="text-[11px] text-muted-foreground">📍 Se capturará tu ubicación actual automáticamente.</p>
           </div>
           <DialogFooter className="px-5 pb-5 pt-2 gap-2 sm:gap-2">
