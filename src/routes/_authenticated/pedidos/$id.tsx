@@ -426,6 +426,21 @@ function OrderDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={linkOpen} onOpenChange={setLinkOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Vincular factura existente de Siigo</DialogTitle></DialogHeader>
+          <p className="text-xs text-muted-foreground">
+            Si la factura ya fue emitida en Siigo (por otro medio), pega aquí el <strong>ID</strong> o el <strong>número</strong>
+            (ej. <code>FV-1234</code>) y la vinculamos al pedido sin volver a facturar.
+          </p>
+          <Input placeholder="ID UUID o número (FV-1234)" value={linkInvoiceId} onChange={(e) => setLinkInvoiceId(e.target.value)} />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLinkOpen(false)}>Cancelar</Button>
+            <Button onClick={submitLinkInvoice} disabled={busy}>Vincular</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
