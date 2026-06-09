@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Loader2, Search, Users, MapPin, History, Wallet, Phone, Mail, FileText, Receipt, Package, ExternalLink, ChevronRight, CheckCircle2, AlertTriangle, Clock } from "lucide-react";
+import { Loader2, Search, Users, MapPin, History, Wallet, Phone, Mail, FileText, Receipt, Package, ExternalLink, Camera, ChevronRight, CheckCircle2, AlertTriangle, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { listCustomers } from "@/lib/catalog/catalog.functions";
 import { listEventTypes, createCustomerEvent, listCustomerEvents } from "@/lib/customers/events.functions";
