@@ -49,7 +49,7 @@ export const listCustomers = createServerFn({ method: "GET" })
     }
     let q = supabaseAdmin
       .from("customers")
-      .select("id, siigo_id, identification, display_name, commercial_name, email, phone, address, city_name, state_name, active, seller_siigo_id, created_by_user, approval_status" as never)
+      .select("id, siigo_id, identification, display_name, commercial_name, email, phone, address, city_name, state_name, active, seller_siigo_id, created_by_user")
       .order("display_name", { ascending: true })
       .limit(data.limit);
     if (data.search) {
@@ -64,8 +64,8 @@ export const listCustomers = createServerFn({ method: "GET" })
       q = q.eq("seller_siigo_id", data.seller_id);
     }
     if (typeof data.active === "boolean") q = q.eq("active", data.active);
-    // Por defecto ocultar rechazados del listado normal.
-    q = q.neq("approval_status" as never, "rejected");
+    // Ocultar rechazados del listado normal (la columna existe tras la migración).
+    q = (q as unknown as { neq: (c: string, v: string) => typeof q }).neq("approval_status", "rejected");
     const { data: rows, error } = await q;
     if (error) throw new Error(error.message);
     return { customers: rows ?? [] };
@@ -97,7 +97,8 @@ export const listProducts = createServerFn({ method: "GET" })
     let reservedMap = new Map<string, number>();
     if (ids.length > 0) {
       const { data: resv } = await supabaseAdmin
-        .from("product_reservations" as never)
+        // Vista creada en migración; aún no aparece en types generados.
+        .from("product_reservations" as unknown as "products")
         .select("product_id, reserved_qty")
         .in("product_id", ids);
       for (const r of ((resv ?? []) as unknown) as Array<{ product_id: string; reserved_qty: number | string }>) {
