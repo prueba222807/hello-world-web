@@ -517,43 +517,6 @@ function NuevoPedidoPage() {
         </>
       )}
 
-      {false && (
-        <Dialog open={false} onOpenChange={() => {}}>
-          <DialogContent>
-            <DialogFooter className="gap-2">
-              <Button
-                onClick={async () => {
-                  if (!newCustomer.identification.trim() || !newCustomer.display_name.trim()) {
-                      toast.error("Identificación y nombre son obligatorios");
-                      return;
-                    }
-                    setCreatingCustomer(true);
-                    try {
-                      const r = await createCustomerFn({ data: {
-                        identification: newCustomer.identification.trim(),
-                        display_name: newCustomer.display_name.trim(),
-                        person_type: newCustomer.person_type,
-                        id_type: newCustomer.id_type,
-                        email: newCustomer.email.trim() || undefined,
-                        phone: newCustomer.phone.trim() || undefined,
-                        address: newCustomer.address.trim() || undefined,
-                        city_name: newCustomer.city_name.trim() || undefined,
-                      }});
-                      toast.success("Cliente creado");
-                      setNewCustomerOpen(false);
-                      setNewCustomer({ identification: "", display_name: "", email: "", phone: "", address: "", city_name: "", first_name: "", last_name: "", commercial_name: "", person_type: "Person", id_type: "13" });
-                      setCustomer(r.customer as Customer);
-                      setStep("items");
-                    } catch (e) {
-                      toast.error(e instanceof Error ? e.message : "Error");
-                    } finally { setCreatingCustomer(false); }
-                  }}
-              >{creatingCustomer ? <Loader2 className="w-4 h-4 animate-spin" /> : "Crear y continuar"}</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
-
       {step === "items" && customer && (
         <>
           <Card className="p-3 bg-accent/20">
