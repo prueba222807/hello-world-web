@@ -669,13 +669,21 @@ export const listPendingCustomers = createServerFn({ method: "GET" })
     await assertAdmin(context.userId);
     const { data, error } = await supabaseAdmin
       .from("customers")
-      .select("id, identification, id_type, person_type, display_name, commercial_name, first_name, last_name, email, phone, address, city_name, city_code, country_code, seller_siigo_id, created_by_user, requested_at, created_at")
+      .select("id, identification, id_type, person_type, display_name, commercial_name, first_name, last_name, email, phone, address, city_name, city_code, country_code, seller_siigo_id, created_by_user, created_at")
       .order("created_at", { ascending: false })
       .limit(200);
     if (error) throw new Error(error.message);
-    // Filtrar pendientes en JS para evitar problemas de tipos hasta que regenere types.
-    const rows = (data ?? []) as Array<Record<string, unknown>>;
-    const pending = rows.filter((r) => (r as { approval_status?: string }).approval_status === "pending");
+    // Cargar approval_status por separado para evitar romper tipos generados.
+    const rows = data ?? [];
+    if (rows.length === 0) return { customers: [] as Array<typeof rows[number] & { approval_status: string }> };
+    const ids = rows.map((r) => r.id);
+    const { data: statuses } = await (supabaseAdmin as unknown as { from: (t: string) => { select: (s: string) => { in: (c: string, v: string[]) => Promise<{ data: Array<{ id: string; approval_status: string }> | null }> } } })
+      .from("customers").select("id, approval_status").in("id", ids);
+    const statusMap = new Map<string, string>();
+    for (const s of statuses ?? []) statusMap.set(s.id, s.approval_status);
+    const pending = rows
+      .filter((r) => statusMap.get(r.id) === "pending")
+      .map((r) => ({ ...r, approval_status: statusMap.get(r.id) ?? "pending" }));
     return { customers: pending };
   });
 
