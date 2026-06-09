@@ -59,7 +59,7 @@ type OrderDetail = {
 
 function OrderDetailPage() {
   const { id } = Route.useParams();
-  const { user, hasRole } = useAuth();
+  const { user, hasRole, roles } = useAuth();
   const router = useRouter();
   const fetchOrder = useServerFn(getOrder);
   const doInvoice = useServerFn(invoiceOrder);
@@ -70,8 +70,8 @@ function OrderDetailPage() {
   const doDeliver = useServerFn(deliverToCustomer);
   const fetchHandoffs = useServerFn(listHandoffs);
   const doRequest = useServerFn(createOrderRequest);
-  const doUpload = useServerFn(uploadEvidence);
   const fetchUsersByRole = useServerFn(listUsersByRole);
+  const doLinkInvoice = useServerFn(linkExistingSiigoInvoice);
 
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -83,11 +83,13 @@ function OrderDetailPage() {
   const [sendOpen, setSendOpen] = useState<null | "bodega" | "conductor" | "facturacion" | "cartera">(null);
   const [sendNotes, setSendNotes] = useState("");
   const [sendUser, setSendUser] = useState<string>("");
-  const [sendPhoto, setSendPhoto] = useState<File | null>(null);
+  const [sendPhotoUrls, setSendPhotoUrls] = useState<string[]>([]);
   const [sendUsers, setSendUsers] = useState<Array<{ id: string; full_name: string | null; email: string | null }>>([]);
   const [delivOpen, setDelivOpen] = useState(false);
   const [delivNotes, setDelivNotes] = useState("");
-  const [delivPhoto, setDelivPhoto] = useState<File | null>(null);
+  const [delivPhotoUrls, setDelivPhotoUrls] = useState<string[]>([]);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkInvoiceId, setLinkInvoiceId] = useState("");
 
   const load = useCallback(() => {
     setLoading(true);
